@@ -243,8 +243,7 @@ class NtfsTab(QWidget):
                              "recovered": False, "recovered_full": bool(rec["recovered_full"]),
                              "note": rec["note"], "path": None}
                     if rec["data"]:
-                        from fdlib.ntfs import _safe_name, _unique_path
-                        out = _unique_path(outdir, _safe_name(str(want.get("name") or f"inode_{want.get('inode')}")))
+                        out = ntfs.output_path_for(outdir, want)
                         try:
                             with open(out, "wb") as fh:
                                 fh.write(rec["data"])

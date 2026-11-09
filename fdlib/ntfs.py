@@ -71,6 +71,38 @@ def _unique_path(outdir: str, filename: str) -> str:
     return candidate
 
 
+def safe_relative_path(item: dict) -> str:
+    """从条目信息推导恢复输出相对路径：普通/删除文件保留目录结构，孤儿 MFT 记录放 _orphan/。"""
+    name = str(item.get("name") or f"inode_{item.get('inode') or 'unknown'}")
+    path = str(item.get("path") or "")
+    source = item.get("source") or ""
+    if source == "mft_unallocated" or path.startswith("/$OrphanFiles"):
+        return os.path.join("_orphan", _safe_name(name))
+    parts = [p for p in path.strip("/").split("/") if p]
+    # 过滤 TSK 虚拟目录（$OrphanFiles、$Extend 等）
+    parts = [p for p in parts if not p.startswith("$")]
+    if not parts:
+        parts = [name]
+    else:
+        parts[-1] = name
+    return os.path.join(*[_safe_name(p) for p in parts])
+
+
+def output_path_for(outdir: str, item: dict) -> str:
+    """为条目生成不重名的输出路径，并创建所需目录（保留目录结构）。"""
+    rel = safe_relative_path(item)
+    base, ext = os.path.splitext(rel)
+    candidate = os.path.join(outdir, rel)
+    i = 1
+    while os.path.exists(candidate):
+        candidate = os.path.join(outdir, f"{base}-{i}{ext}")
+        i += 1
+    parent = os.path.dirname(candidate)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return candidate
+
+
 def _decode_name(raw) -> str:
     try:
         if isinstance(raw, bytes):
@@ -211,14 +243,35 @@ class NtfsVolume:
                 meta = entry.info.meta
                 full = path.rstrip("/") + "/" + name_str
                 if meta is None:
-                    # 只有目录项、MFT 记录已释放：名字还在，内容不可读
-                    if include_deleted:
-                        yield {
-                            "name": name_str, "path": full, "inode": 0, "size": None,
-                            "deleted": True, "type": "unknown", "mtime": 0, "ctime": 0,
-                            "source": "dir_entry_only",
-                            "note": "仅剩目录项（MFT 记录已释放），内容不可直接读取",
-                        }
+                    if not include_deleted:
+                        continue
+                    # 目录项还在，但 TSK 没有直接给出 meta：尝试用 name.meta_addr 打开 MFT 记录。
+                    # 这样可以把“删除后只剩目录项”的文件名和 inode 对起来，恢复时用回真实文件名。
+                    addr = getattr(name, "meta_addr", None) if name is not None else None
+                    resolved = None
+                    if addr:
+                        try:
+                            resolved = getattr(self.fs.open_meta(inode=int(addr)).info, "meta", None)
+                        except Exception:  # noqa: BLE001
+                            resolved = None
+                    if (resolved is not None
+                            and getattr(resolved, "type", None) == pytsk3.TSK_FS_META_TYPE_REG
+                            and (int(getattr(resolved, "flags", 0)) & pytsk3.TSK_FS_META_FLAG_UNALLOC)):
+                        item = self._entry_from_meta(name_str, full, resolved)
+                        item["deleted"] = True
+                        item["source"] = "dir_deleted"
+                        item["inode"] = int(getattr(resolved, "addr", 0) or addr or 0)
+                        ext = os.path.splitext(name_str)[1].lower().lstrip(".")
+                        if not (extensions and ext not in extensions):
+                            yield item
+                        continue
+                    # 真的只剩名字（MFT 记录已被复用/释放）：内容不可直接读取
+                    yield {
+                        "name": name_str, "path": full, "inode": 0, "size": None,
+                        "deleted": True, "type": "unknown", "mtime": 0, "ctime": 0,
+                        "source": "dir_entry_only",
+                        "note": "仅剩目录项（MFT 记录已释放/复用），内容不可直接读取",
+                    }
                     continue
                 item = self._entry_from_meta(name_str, full, meta)
                 if item["deleted"] and not include_deleted:
@@ -330,8 +383,11 @@ class NtfsVolume:
                 except Exception:  # noqa: BLE001
                     pass
         if scan_unallocated:
+            # 目录项已经给出名字/inode 的删除文件，不再以 inode_N 的孤儿记录重复输出
+            seen_inodes = {e.get("inode") for e in result if e.get("inode")}
             remain = (limit - len(result)) if limit else None
-            orphan = self._scan_unallocated(extensions, errors)
+            orphan = [e for e in self._scan_unallocated(extensions, errors)
+                      if e.get("inode") not in seen_inodes]
             if remain is not None:
                 orphan = orphan[:remain]
             result.extend(orphan)
@@ -407,7 +463,7 @@ class NtfsVolume:
                 "source": item.get("source"), "path": None,
             }
             if rec["data"]:
-                out = _unique_path(outdir, _safe_name(item["name"]))
+                out = output_path_for(outdir, item)
                 try:
                     with open(out, "wb") as fh:
                         fh.write(rec["data"])

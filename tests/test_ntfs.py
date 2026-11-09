@@ -100,13 +100,23 @@ def main():
             entries = vol.list_entries(include_deleted=True, scan_unallocated=True, limit=2000)
             cand = [e for e in entries if e["inode"] == 28 and e["deleted"]]
             check("扫描到已删除 inode 28", bool(cand), str([e["inode"] for e in entries][:10]))
+            check("删除记录按 inode 去重（只出现一次）", len(cand) == 1, str(len(cand)))
             if cand:
                 check("删除记录大小 286671", cand[0]["size"] == 286671, str(cand[0]))
-                check("来源是 mft_unallocated", cand[0]["source"] == "mft_unallocated",
+                check("删除记录解析出真实文件名 1.txt", cand[0]["name"] == "1.txt",
+                      str(cand[0]["name"]))
+                check("来源是目录项+未分配记录（dir_deleted）",
+                      cand[0]["source"] in ("dir_deleted", "mft_unallocated"),
                       str(cand[0]["source"]))
             res = vol.recover(outdir2, include_deleted=True, scan_unallocated=True, limit=50)
             hit = [f for f in res["files"] if f["inode"] == 28 and f["recovered"]]
             check("恢复已删除记录", bool(hit), str(res["errors"]))
+            check("恢复出的文件名保持原名",
+                  bool(hit) and str(hit[0].get("name")) == "1.txt",
+                  str(hit[0].get("name")) if hit else "")
+            check("恢复路径保留目录结构（test/1.txt）",
+                  bool(hit) and os.sep + "test" + os.sep in str(hit[0].get("path")),
+                  str(hit[0].get("path")) if hit else "")
             if hit:
                 with open(hit[0]["path"], "rb") as fh:
                     got = fh.read()
@@ -120,7 +130,8 @@ def main():
                                deleted_image, "--inode-scan", "--limit", "50"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace")
         check("CLI ntfs --inode-scan 退出码 0", proc.returncode == 0, proc.stderr[-300:])
-        check("CLI 输出包含 mft_unallocated", "mft_unallocated" in proc.stdout,
+        check("CLI 输出包含删除记录来源（dir_deleted/mft_unallocated）",
+              ("dir_deleted" in proc.stdout) or ("mft_unallocated" in proc.stdout),
               proc.stdout[:200])
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

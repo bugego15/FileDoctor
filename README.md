@@ -1,6 +1,6 @@
-# FileDoctor —— 自己动手做的文件恢复工具箱（v0.3）
+# FileDoctor —— 自己动手做的文件恢复工具箱（v0.3.1）
 
-![version](https://img.shields.io/badge/version-v0.3.0-blue)
+![version](https://img.shields.io/badge/version-v0.3.1-blue)
 [![release](https://img.shields.io/github/v/release/bugego15/FileDoctor)](https://github.com/bugego15/FileDoctor/releases)
 [![tests](https://img.shields.io/badge/tests-9%2F9%20pass-brightgreen)](.)
 
@@ -58,6 +58,9 @@ python filetool.py capacity G:\ --write-gb 58 --yes
 - `carve` 对残缺 docx（无中央目录）的抢救：真实损坏样本可用“残缺重建”路径恢复出可打开的 docx。
 - `ntfs` 对真实 64MB NTFS 镜像：列出用户文件、恢复 `/test/1.txt`；模拟删除其 MFT 记录后，通过
   MFT 未分配扫描完整恢复（286,671 字节，SHA-256 一致）。
+- **U 盘实机测试（58 GB NTFS）**：写入 8 个样本 → 删除 4 个 → 扫描并恢复 **4/4（保留真实文件名，SHA-256 一致）**；
+  损坏 DOCX 修复通过；256 MB 容量/写入校验通过；原始设备雕刻出 3 个完整 DOCX。
+  详见 [docs/实机测试记录_U盘.md](<docs/实机测试记录_U盘.md>)。
 - GUI：`gui.py --self-test` 离屏自检通过（5 个标签页、PySide6 6.12、pytsk3 可用）；
   PyInstaller 打包出 `dist\FileDoctor\FileDoctor.exe`。
 
@@ -170,7 +173,7 @@ file-doctor/
 ## 已知限制（v0.1）
 
 - 删除文件恢复：**exFAT 已支持**；**NTFS 已支持**（pytsk3，已在真实 NTFS 镜像上联调；物理盘/VHD 真实误删待管理员权限验收）；FAT32 尚未实现。
-- MFT 记录已释放的孤儿删除文件：名字可能丢失（显示 `inode_<N>`），能在 data run 还在时恢复内容；读不全时结果会标 `recovered_full=false`，可转 `carve` 雕刻。
+- 删除文件的目录项还在时，会回查 MFT 记录合并出**真实文件名**；只有目录项完全丢失的孤儿记录才显示 `inode_<N>`（data run 还在时可恢复内容，读不全时标 `recovered_full=false`，可转 `carve` 雕刻）。
 - `carve` 不支持 ZIP64；完整 ZIP 上限 256MB、salvage 窗口 64MB、PNG 128MB、JPG 64MB、PDF 256MB、EXE 128MB，超限跳过并记 `errors`。
 - JPEG 为基本合理性校验（marker + SOF + EOI），progressive JPEG 理论上可能误判；EXE 长度按 section 表推算（不含 overlay）。
 - 文本碎片固定 ≥256B 才输出；单段超 512MB 会截断。对超大设备 `--text` 较慢，建议配合 `--start/--length`。
