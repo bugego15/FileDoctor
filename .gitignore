@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.preview-*/
+examples/out/
+tests/_*
+tests/assets/
+demo/
+build/
+dist/
+*.spec
+_ntfs_out*/
